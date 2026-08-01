@@ -11,6 +11,7 @@ import { ChatSimulator } from './components/ChatSimulator.js';
 import { ScraperModal } from './components/ScraperModal.js';
 import { OnboardingModal } from './components/OnboardingModal.js';
 import { SuperAdminModal } from './components/SuperAdminModal.js';
+import { PipelinePlaybookModal } from './components/PipelinePlaybookModal.js';
 import { PixelOfficeCanvas } from './components/PixelOfficeCanvas.js';
 import {
   Zap,
@@ -115,7 +116,7 @@ export function App() {
   ]);
 
   // Modals
-  const [activeModal, setActiveModal] = useState<'siteEditor' | 'chat' | 'scraper' | 'onboarding' | 'superadmin' | 'leadManual' | null>(null);
+  const [activeModal, setActiveModal] = useState<'siteEditor' | 'chat' | 'scraper' | 'onboarding' | 'superadmin' | 'playbook' | 'leadManual' | null>(null);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
   const [loadingLeadId, setLoadingLeadId] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -437,6 +438,7 @@ export function App() {
         onOpenScraperModal={() => setActiveModal('scraper')}
         onOpenOnboardingModal={() => setActiveModal('onboarding')}
         onOpenSuperAdminModal={() => setActiveModal('superadmin')}
+        onOpenPlaybookModal={() => setActiveModal('playbook')}
         onNavigateLanding={() => setAppMode('landing')}
         currentUser={currentUser}
         onLogout={() => {
@@ -1335,6 +1337,15 @@ chmod +x setup.sh
 
       {activeModal === 'superadmin' && (
         <SuperAdminModal onClose={() => setActiveModal(null)} />
+      )}
+
+      {activeModal === 'playbook' && (
+        <PipelinePlaybookModal
+          onClose={() => setActiveModal(null)}
+          leads={leads}
+          onRefreshLeads={() => loadData()}
+          showToast={(msg) => showToast(msg)}
+        />
       )}
 
       {/* Modal Lead Manual */}

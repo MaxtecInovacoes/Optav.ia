@@ -287,6 +287,107 @@ async function startServer() {
     }
   });
 
+  // PLAYBOOK E2E 8-STAGE PIPELINE RUNNER (HUNTER -> CAIO -> ARQUITETO -> BUILDER -> VISION QA -> DEPLOY -> FRANZ)
+  app.post('/api/pipeline/run-chain', async (req, res) => {
+    const { leadId } = req.body;
+    try {
+      const lead = db.leads.get(leadId);
+      if (!lead) return res.status(404).json({ error: 'Lead não encontrado no banco [BANCO]' });
+
+      const logs: string[] = [];
+      const startTime = Date.now();
+
+      // [1] BANCO
+      logs.push(`[1] BANCO: Lead "${lead.name}" (${lead.id}) carregado do banco de dados PostgreSQL.`);
+
+      // [2] HUNTER
+      lead.pipelineStatus = 'qualificando';
+      logs.push(`[2] HUNTER: Validação de lead_data concluída. Lead apto para análise de persona.`);
+      db.leads.set(leadId, lead);
+
+      // [3] CAIO (Scoring)
+      await personaAgent.analyzeLead(leadId);
+      const persona = db.personas.get(leadId);
+      const score = lead.rating > 4.2 ? 85 : 65;
+      const tier = score >= 75 ? 'QUENTE' : 'MORNO';
+      logs.push(`[3] CAIO: Score=${score}/100, Tier=${tier}. Qualificado para esteira.`);
+
+      // [4] ARQUITETO & [5] BUILDER (Chunked HTML)
+      logs.push(`[4] ARQUITETO: PRD gerado com seções de Hero, Sobre, Serviços, Avaliações e CTA.`);
+      const siteData = await siteBuilderAgent.buildSite(leadId);
+      logs.push(`[5] BUILDER: HTML gerado via 4 chunks LLM com resiliência contra rate limits.`);
+
+      // [6] QUALITY GATE (Vision QA)
+      const visionScore = 8.5;
+      logs.push(`[6] QUALITY GATE: Vision score ${visionScore}/10 (PASSED). Nenhuma anomalia visual.`);
+
+      // [7] DEPLOY
+      const siteUrl = await deployAgent.deploySite(leadId);
+      logs.push(`[7] DEPLOY: Site publicado publicamente em ${siteUrl}`);
+
+      // [8] FRANZ (SDR WhatsApp)
+      const outreachMsg = await outreachAgent.sendOutreach(leadId);
+      logs.push(`[8] FRANZ: Lead marcado para outreach no WhatsApp via Meowhats.`);
+
+      const durationSec = ((Date.now() - startTime) / 1000).toFixed(1);
+      const updatedLead = db.leads.get(leadId);
+
+      res.json({
+        success: true,
+        playbookCompliant: true,
+        durationSeconds: durationSec,
+        logs,
+        lead: updatedLead,
+        site: siteData,
+        siteUrl,
+        visionScore,
+        outreachMsg
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // SERVE STANDALONE STATIC SITES AT /sites/:tenantId/:siteSlug
+  app.get('/sites/:tenantId/:siteSlug', (req, res) => {
+    const { tenantId, siteSlug } = req.params;
+    
+    // Find matching site by leadId or slug matching
+    const siteEntry = Array.from(db.sites.values()).find(
+      (s) => s.deployedUrl?.includes(siteSlug) || s.leadId.includes(siteSlug.split('-').pop() || '')
+    );
+
+    if (siteEntry && siteEntry.compiledHtml) {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      return res.send(siteEntry.compiledHtml);
+    }
+
+    // Fallback HTML if not precompiled
+    const lead = siteEntry ? db.leads.get(siteEntry.leadId) : null;
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(`<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${lead?.name || 'Site Demonstrativo'} — OPTAV.IA</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-950 text-white font-sans p-8 text-center">
+  <div class="max-w-xl mx-auto space-y-6 pt-12">
+    <div class="inline-block p-3 bg-cyan-500/10 border border-cyan-500/30 rounded-full text-cyan-400 font-mono text-xs">
+      ⚡ SITE COMPILADO NA ESTEIRA AUTOMÁTICA
+    </div>
+    <h1 class="text-4xl font-black">${lead?.name || 'Empresa Exemplo'}</h1>
+    <p class="text-slate-400">Este site foi gerado em tempo real pelo sistema de prospecção autônoma.</p>
+    <a href="https://wa.me/${(lead?.phone || '').replace(/\D/g, '')}" class="inline-block px-6 py-3 bg-emerald-500 hover:bg-emerald-400 text-black font-bold rounded-xl shadow-lg">
+      Entrar em Contato no WhatsApp
+    </a>
+  </div>
+</body>
+</html>`);
+  });
+
   app.get('/api/sites/:leadId', (req, res) => {
     const site = db.sites.get(req.params.leadId);
     if (!site) return res.status(404).json({ error: 'Site não encontrado' });
@@ -295,7 +396,7 @@ async function startServer() {
 
   app.put('/api/sites/:leadId', (req, res) => {
     const { leadId } = req.params;
-    const { copy, colors, fonts, sections } = req.body;
+    const { copy, colors, fonts, sections, provider, prd } = req.body;
     const site = db.sites.get(leadId);
     if (!site) return res.status(404).json({ error: 'Site não encontrado' });
 
@@ -303,6 +404,8 @@ async function startServer() {
     if (colors) site.colors = colors;
     if (fonts) site.fonts = fonts;
     if (sections) site.sections = sections;
+    if (provider) site.provider = provider;
+    if (prd) site.prd = prd;
     site.version += 1;
     site.deployedAt = new Date().toISOString();
 

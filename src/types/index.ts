@@ -1,6 +1,6 @@
 export type SegmentType = 'restaurante' | 'clinica' | 'oficina' | 'servicos' | 'geral';
 
-export type FunnelStatus = 'aguardando' | 'followup_1' | 'followup_2' | 'lead_frio' | 'lead_quente' | 'perdido';
+export type FunnelStatus = 'aguardando' | 'qualificando' | 'followup_1' | 'followup_2' | 'lead_frio' | 'lead_quente' | 'concluido' | 'perdido';
 
 export type PipelineStage = 'pending' | 'scraped' | 'persona_done' | 'site_generated' | 'deployed' | 'messaged' | 'completed' | 'failed';
 
@@ -87,18 +87,67 @@ export interface PersonaData {
   };
 }
 
+export interface DesignerPRD {
+  business_name: string;
+  cidade: string;
+  segmento: string;
+  archetype: 'industrial-bold' | 'soft-medical' | 'luxury-dark-gold' | 'organic-warm' | 'tech-neon' | 'minimal-clean' | 'cyberpunk-sharp';
+  layoutDna: {
+    layoutFamily: 'split-hero' | 'parallax-hero' | 'bento-grid' | 'luxury-dark' | 'minimal-floating';
+    heroVariant: 'parallax' | 'split-70-30' | 'bento-card' | 'fullscreen-minimal';
+    motionConfig: {
+      hasGsap: boolean;
+      hasLenis: boolean;
+      hasParallax: boolean;
+      hover3d: boolean;
+    };
+    sectionCountRange: [number, number];
+  };
+  designTokens: {
+    archetype: string;
+    googleFontsUrl: string;
+    displayFont: string;
+    bodyFont: string;
+    radius: '0px' | '8px' | '16px' | '9999px';
+    colors: {
+      primary: string;
+      accent: string;
+      ink: string;
+      paper: string;
+      surface: string;
+    };
+    forbiddenRadiusClasses: string[];
+    forbiddenPhrases: string[];
+  };
+  conversionMap: {
+    ctaPrimaryLabel: string;
+    ctaSecondaryLabel: string;
+    guaranteeText: string;
+    trustBadge: string;
+  };
+  faqs?: Array<{ question: string; answer: string }>;
+  hero: {
+    h1: string;
+    subheadline: string;
+    ctaPrimary: { label: string; action: string };
+    imageStyle: string;
+  };
+}
+
 export interface SiteSection {
   id: string;
-  type: 'hero' | 'about' | 'services' | 'testimonials' | 'cta' | 'gallery' | 'contact' | 'custom';
+  type: 'hero' | 'about' | 'services' | 'testimonials' | 'cta' | 'gallery' | 'contact' | 'bento' | 'faq' | 'custom';
   title: string;
   subtitle?: string;
   content?: string;
-  items?: Array<{ title: string; description: string; price?: string; icon?: string; image?: string }>;
+  items?: Array<{ title: string; description: string; price?: string; icon?: string; image?: string; tag?: string }>;
 }
 
 export interface SiteData {
   leadId: string;
-  template: SegmentType;
+  template: SegmentType | string;
+  provider?: 'openai' | 'anthropic' | 'nvidia' | 'assembly-engine';
+  prd?: DesignerPRD;
   copy: {
     heroTitle: string;
     heroSubtitle: string;
@@ -111,6 +160,9 @@ export interface SiteData {
     secondary: string;
     accent: string;
     background: string;
+    ink?: string;
+    paper?: string;
+    surface?: string;
   };
   fonts: {
     display: string;
@@ -123,8 +175,12 @@ export interface SiteData {
   };
   logoUrl?: string;
   sections: SiteSection[];
+  faqs?: Array<{ question: string; answer: string }>;
   deployedUrl?: string;
   deployedAt?: string;
+  compiledHtml?: string;
+  visionScore?: number;
+  chunksCount?: number;
   version: number;
   history?: Array<{ timestamp: string; note: string }>;
 }
