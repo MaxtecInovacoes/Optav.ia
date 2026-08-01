@@ -2,8 +2,17 @@ import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { AdminUser } from '../src/types/admin.js';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'optavia-jwt-secret-key-2026-production-32-chars';
-const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'optavia-refresh-secret-key-2026-production';
+const JWT_SECRET = (() => {
+  const v = process.env.JWT_SECRET;
+  if (!v) throw new Error('JWT_SECRET ausente no .env — servidor não inicia sem segredo configurado.');
+  return v;
+})();
+
+const JWT_REFRESH_SECRET = (() => {
+  const v = process.env.JWT_REFRESH_SECRET;
+  if (!v) throw new Error('JWT_REFRESH_SECRET ausente no .env — servidor não inicia sem segredo configurado.');
+  return v;
+})();
 const JWT_EXPIRY = '24h';
 const REFRESH_EXPIRY = '7d';
 const BCRYPT_ROUNDS = 12;

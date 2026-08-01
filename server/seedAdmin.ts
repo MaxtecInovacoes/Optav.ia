@@ -3,8 +3,13 @@ import { db } from './db.js';
 import { logger } from './logger.js';
 
 export async function seedDefaultAdmin(): Promise<void> {
-  const adminEmail = process.env.DEFAULT_ADMIN_EMAIL || 'admin@optavia.ai';
-  const adminPassword = process.env.DEFAULT_ADMIN_PASSWORD || 'trabalho.maxtec@gmail.com';
+  const adminEmail = process.env.DEFAULT_ADMIN_EMAIL;
+  const adminPassword = process.env.DEFAULT_ADMIN_PASSWORD;
+
+  if (!adminEmail || !adminPassword) {
+    logger.warn('[seedAdmin] DEFAULT_ADMIN_EMAIL ou DEFAULT_ADMIN_PASSWORD não configurados — seed pulado.');
+    return;
+  }
 
   const existing = await db.getAdminByEmail(adminEmail);
   if (existing) {

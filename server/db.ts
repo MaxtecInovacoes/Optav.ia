@@ -422,18 +422,66 @@ class IntegratedDB {
 
   async saveSession(session: AdminSession): Promise<AdminSession> {
     this.sessions.set(session.token, session);
+    if (this.pgConnected) {
+      try {
+        const pool = getPostgresPool();
+        await pool.query(
+          `INSERT INTO sessions (id, admin_user_id, token, refresh_token, expires_at)
+           VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (id) DO UPDATE SET refresh_token = EXCLUDED.refresh_token, expires_at = EXCLUDED.expires_at`,
+          [session.id, session.adminUserId, session.token, session.refreshToken, session.expiresAt]
+        );
+      } catch (err) {
+        logger.error({ err }, '[DB] PostgreSQL insert failed for saveSession');
+      }
+    }
     return session;
   }
 
   async getSessionByRefreshToken(refreshToken: string): Promise<AdminSession | undefined> {
+    // First check memory
     for (const sess of this.sessions.values()) {
       if (sess.refreshToken === refreshToken) return sess;
+    }
+    // Fallback to PostgreSQL
+    if (this.pgConnected) {
+      try {
+        const pool = getPostgresPool();
+        const res = await pool.query(
+          `SELECT id, admin_user_id, token, refresh_token, expires_at, created_at FROM sessions WHERE refresh_token = $1`,
+          [refreshToken]
+        );
+        if (res.rows.length > 0) {
+          const row = res.rows[0];
+          const session: AdminSession = {
+            id: row.id,
+            adminUserId: row.admin_user_id,
+            token: row.token,
+            refreshToken: row.refresh_token,
+            expiresAt: row.expires_at,
+            createdAt: row.created_at
+          };
+          // Hydrate memory for next lookup
+          this.sessions.set(session.token, session);
+          return session;
+        }
+      } catch (err) {
+        logger.error({ err }, '[DB] PostgreSQL query failed for getSessionByRefreshToken');
+      }
     }
     return undefined;
   }
 
   async deleteSessionByToken(token: string): Promise<void> {
     this.sessions.delete(token);
+    if (this.pgConnected) {
+      try {
+        const pool = getPostgresPool();
+        await pool.query(`DELETE FROM sessions WHERE token = $1`, [token]);
+      } catch (err) {
+        logger.error({ err }, '[DB] PostgreSQL delete failed for deleteSessionByToken');
+      }
+    }
   }
 
   // Cakto Event Tracking

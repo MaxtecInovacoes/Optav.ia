@@ -6,8 +6,12 @@ const CAKTO_SECRET = process.env.CAKTO_WEBHOOK_SECRET || 'SECRET_938a94e0';
 
 export function validateCaktoSignature(rawBody: Buffer, xCaktoHash: string | undefined): boolean {
   if (!process.env.CAKTO_WEBHOOK_SECRET) {
-    logger.warn('[Cakto] CAKTO_WEBHOOK_SECRET não configurado — permitindo sem validação rigorosa em dev');
-    return true;
+    if (process.env.CAKTO_WEBHOOK_SKIP_VALIDATION === 'true') {
+      logger.warn('[Cakto] CAKTO_WEBHOOK_SECRET ausente — SKIP_VALIDATION=true ativado (DEV apenas)');
+      return true;
+    }
+    logger.error('[Cakto] CAKTO_WEBHOOK_SECRET ausente — rejeitando webhook. Defina CAKTO_WEBHOOK_SKIP_VALIDATION=true apenas em dev.');
+    return false;
   }
   if (!xCaktoHash || !rawBody) return false;
   try {
