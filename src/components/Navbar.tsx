@@ -1,6 +1,6 @@
 import React from 'react';
 import { Tenant } from '../types/index.js';
-import { Sparkles, Search, Layers, Shield, UserCheck, Plus, CheckCircle2, Zap } from 'lucide-react';
+import { Sparkles, Search, Layers, Shield, UserCheck, Plus, CheckCircle2, Zap, Home, LogOut, User } from 'lucide-react';
 
 interface NavbarProps {
   tenants: Tenant[];
@@ -9,6 +9,9 @@ interface NavbarProps {
   onOpenScraperModal: () => void;
   onOpenOnboardingModal: () => void;
   onOpenSuperAdminModal: () => void;
+  onNavigateLanding: () => void;
+  currentUser?: any;
+  onLogout?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -17,7 +20,10 @@ export const Navbar: React.FC<NavbarProps> = ({
   onSelectTenant,
   onOpenScraperModal,
   onOpenOnboardingModal,
-  onOpenSuperAdminModal
+  onOpenSuperAdminModal,
+  onNavigateLanding,
+  currentUser,
+  onLogout
 }) => {
   const currentTenant = tenants.find((t) => t.id === currentTenantId) || tenants[0];
 
@@ -25,7 +31,11 @@ export const Navbar: React.FC<NavbarProps> = ({
     <header className="w-full bg-[#0A0C14] border-b border-slate-800 text-slate-300 px-4 py-2.5 flex items-center justify-between sticky top-0 z-50 shrink-0 font-mono">
       {/* Brand & Logo */}
       <div className="flex items-center space-x-4">
-        <div className="flex items-center space-x-2.5">
+        <button 
+          onClick={onNavigateLanding}
+          className="flex items-center space-x-2.5 hover:opacity-80 transition-opacity cursor-pointer text-left"
+          title="Ir para a Landing Page"
+        >
           <div className="w-5 h-5 bg-cyan-500 flex items-center justify-center rounded-xs rotate-45 shrink-0 shadow-[0_0_8px_rgba(6,182,212,0.4)]">
             <div className="w-2 h-2 bg-black rounded-full"></div>
           </div>
@@ -37,7 +47,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               v4.2_MULTI
             </span>
           </div>
-        </div>
+        </button>
 
         {/* Telemetry Status Items */}
         <div className="hidden lg:flex items-center space-x-3 text-[10px] tracking-wider text-slate-500 border-l border-slate-800 pl-4">
@@ -57,6 +67,16 @@ export const Navbar: React.FC<NavbarProps> = ({
 
       {/* Tenant Selector & Actions */}
       <div className="flex items-center space-x-2.5">
+        {/* Landing Page Link */}
+        <button
+          onClick={onNavigateLanding}
+          className="hidden sm:flex items-center space-x-1 px-2.5 py-1 rounded text-xs font-mono bg-[#05070B] hover:bg-slate-800 text-slate-300 border border-slate-800 transition-colors cursor-pointer"
+          title="Ver Landing Page de Vendas"
+        >
+          <Home className="w-3.5 h-3.5 text-cyan-400" />
+          <span>Landing Page</span>
+        </button>
+
         {/* Tenant Selector */}
         <div className="flex items-center space-x-2 bg-[#05070B] border border-slate-800 rounded px-2.5 py-1 text-xs text-slate-300">
           <Layers className="w-3.5 h-3.5 text-amber-400 shrink-0" />
@@ -105,6 +125,18 @@ export const Navbar: React.FC<NavbarProps> = ({
           <Shield className="w-3.5 h-3.5" />
           <span className="hidden sm:inline">SuperAdmin</span>
         </button>
+
+        {/* User Logout Button */}
+        {currentUser && onLogout && (
+          <button
+            onClick={onLogout}
+            className="flex items-center space-x-1 px-2.5 py-1 rounded text-xs font-mono bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 transition-colors cursor-pointer ml-1"
+            title="Sair do Sistema"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Sair</span>
+          </button>
+        )}
       </div>
     </header>
   );

@@ -26,6 +26,116 @@ async function startServer() {
 
   app.use(express.json());
 
+  // AUTHENTICATION ROUTES
+  app.post('/api/auth/register', (req, res) => {
+    const { email, password, name, agencyName, plan } = req.body;
+    if (!email || !password || !name) {
+      return res.status(400).json({ error: 'Preencha todos os campos obrigatórios (E-mail, Senha e Nome).' });
+    }
+
+    const existingUser = Array.from(db.users.values()).find((u: any) => u.email.toLowerCase() === email.toLowerCase());
+    if (existingUser) {
+      return res.status(400).json({ error: 'Já existe uma conta cadastrada com este e-mail.' });
+    }
+
+    // Create new Tenant for this user
+    const tenantId = `tenant-${Date.now()}`;
+    const newTenant = {
+      id: tenantId,
+      name: agencyName || `Agência de ${name}`,
+      segment: 'restaurante' as SegmentType,
+      region: 'São Paulo, SP',
+      plan: plan || 'pro',
+      targetQueueGoal: 300,
+      minQueueThreshold: 50,
+      autoRefillEnabled: true,
+      sdrConfig: {
+        sdrType: 'custom' as const,
+        name: 'Lucas Mendes',
+        tone: 'informal' as const,
+        rules: ['Apresente o site rapidamente', 'Mencione o diferencial da empresa'],
+        basePrompt: 'Você é Lucas, especialista em conversão digital.'
+      },
+      whatsappConnected: true,
+      createdAt: new Date().toISOString()
+    };
+    db.tenants.set(newTenant.id, newTenant);
+
+    const newUser = {
+      id: `usr-${Date.now()}`,
+      name,
+      email: email.toLowerCase(),
+      password, // Em produção na VPS com PostgreSQL usa hash bcrypt
+      tenantId: newTenant.id,
+      plan: plan || 'pro',
+      createdAt: new Date().toISOString()
+    };
+    db.users.set(newUser.id, newUser);
+
+    res.json({
+      success: true,
+      token: `token-${newUser.id}`,
+      user: { id: newUser.id, name: newUser.name, email: newUser.email, tenantId: newUser.tenantId },
+      tenant: newTenant
+    });
+  });
+
+  app.post('/api/auth/login', (req, res) => {
+    const { email, password } = req.body;
+    if (!email || !password) {
+      return res.status(400).json({ error: 'E-mail e senha são obrigatórios.' });
+    }
+
+    // Default admin login or registered user
+    let user = Array.from(db.users.values()).find((u: any) => u.email.toLowerCase() === email.toLowerCase());
+
+    if (!user && (email === 'admin@optavia.ai' || email === 'trabalho.maxtec@gmail.com')) {
+      // Create admin user dynamically
+      user = {
+        id: 'usr-admin',
+        name: 'Administrador OPTAV.IA',
+        email: email.toLowerCase(),
+        password: password,
+        tenantId: 'tenant-1',
+        plan: 'enterprise',
+        createdAt: new Date().toISOString()
+      };
+      db.users.set(user.id, user);
+    }
+
+    if (!user || user.password !== password) {
+      return res.status(401).json({ error: 'Credenciais inválidas. Verifique seu e-mail e senha.' });
+    }
+
+    const tenant = db.tenants.get(user.tenantId) || db.tenants.get('tenant-1');
+
+    res.json({
+      success: true,
+      token: `token-${user.id}`,
+      user: { id: user.id, name: user.name, email: user.email, tenantId: user.tenantId },
+      tenant
+    });
+  });
+
+  app.get('/api/auth/me', (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader) return res.status(401).json({ error: 'Não autenticado' });
+
+    const userId = authHeader.replace('Bearer token-', '');
+    const user = db.users.get(userId) || db.users.get('usr-admin');
+
+    if (!user) return res.status(401).json({ error: 'Sessão expirada' });
+    const tenant = db.tenants.get(user.tenantId) || db.tenants.get('tenant-1');
+
+    res.json({ user: { id: user.id, name: user.name, email: user.email, tenantId: user.tenantId }, tenant });
+  });
+
+  // CLEAR MOCK DATA FOR REAL PRODUCTION VPS USE
+  app.post('/api/db/clear-mock-data', (req, res) => {
+    const result = db.clearAllMockData();
+    res.json(result);
+  });
+
   // API Routes
   app.get('/api/tenants', (req, res) => {
     res.json(Array.from(db.tenants.values()));
@@ -222,6 +332,32 @@ async function startServer() {
   app.get('/api/conversations/:leadId', (req, res) => {
     const msgs = db.messages.get(req.params.leadId) || [];
     res.json(msgs);
+  });
+
+  // Webhook for Meowhats / WhatsApp Gateway incoming messages
+  app.post('/api/webhooks/whatsapp', async (req, res) => {
+    const { phone, message, text, senderName } = req.body;
+    const incomingText = text || message || '';
+    if (!phone || !incomingText) {
+      return res.status(400).json({ error: 'Telefone e mensagem são obrigatórios' });
+    }
+
+    // Match lead by phone
+    const cleanPhone = phone.replace(/[^0-9]/g, '');
+    const allLeads = Array.from(db.leads.values());
+    const lead = allLeads.find((l) => l.phone && l.phone.replace(/[^0-9]/g, '').includes(cleanPhone));
+
+    if (lead) {
+      // Process incoming message with SDR Agent
+      try {
+        const sdrResponse = await sdrAgent.handleLeadMessage(lead.id, incomingText);
+        return res.json({ success: true, leadId: lead.id, sdrResponse });
+      } catch (err: any) {
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
+    res.json({ success: true, note: 'Mensagem recebida, mas telefone não cadastrado na base' });
   });
 
   app.post('/api/conversations/:leadId', async (req, res) => {

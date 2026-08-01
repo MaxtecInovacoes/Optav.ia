@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Tenant, Lead, LearningPattern, SiteData, FunnelStatus } from './types/index.js';
 import { Navbar } from './components/Navbar.js';
+import { LandingPage } from './components/LandingPage.js';
 import { DashboardKpis } from './components/DashboardKpis.js';
 import { KanbanBoard } from './components/KanbanBoard.js';
 import { LeadTable } from './components/LeadTable.js';
@@ -38,12 +39,29 @@ import {
   ExternalLink,
   MessageSquare,
   Lock,
+  Server,
+  Key,
+  Terminal,
   ChevronRight
 } from 'lucide-react';
 
 export function App() {
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [currentTenantId, setCurrentTenantId] = useState<string>('tenant-1');
+  const [appMode, setAppMode] = useState<'landing' | 'app'>('app');
+  const [currentUser, setCurrentUser] = useState<any>(null);
+
+  const handleClearMockData = async () => {
+    if (!window.confirm('Tem certeza que deseja zerar a base de dados de teste? Todos os leads fictícios serão removidos para uso 100% real na VPS.')) return;
+    try {
+      const res = await fetch('/api/db/clear-mock-data', { method: 'POST' });
+      const data = await res.json();
+      showToast(data.message || 'Base de dados zerada com sucesso!');
+      loadData();
+    } catch (err) {
+      showToast('Erro ao zerar dados da base.');
+    }
+  };
   const [leads, setLeads] = useState<Lead[]>([]);
   const [kpis, setKpis] = useState<any>({
     totalLeads: 0,
@@ -391,6 +409,24 @@ export function App() {
 
   const currentTenant = tenants.find((t) => t.id === currentTenantId) || tenants[0];
 
+  if (appMode === 'landing') {
+    return (
+      <LandingPage
+        isLoggedIn={!!currentUser}
+        onNavigateToDashboard={() => setAppMode('app')}
+        onLoginSuccess={(user, tenant) => {
+          setCurrentUser(user);
+          if (tenant && tenant.id) {
+            setCurrentTenantId(tenant.id);
+          }
+          setAppMode('app');
+          showToast(`Bem-vindo, ${user.name}!`);
+          loadData();
+        }}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#0a0714] text-[#f0f0f5] flex flex-col font-sans select-none antialiased">
       {/* Top Navbar */}
@@ -401,6 +437,12 @@ export function App() {
         onOpenScraperModal={() => setActiveModal('scraper')}
         onOpenOnboardingModal={() => setActiveModal('onboarding')}
         onOpenSuperAdminModal={() => setActiveModal('superadmin')}
+        onNavigateLanding={() => setAppMode('landing')}
+        currentUser={currentUser}
+        onLogout={() => {
+          setCurrentUser(null);
+          showToast('Você saiu da sua conta.');
+        }}
       />
 
       {/* Notification Toast */}
@@ -1172,6 +1214,77 @@ export function App() {
                   </div>
                 </div>
               </div>
+
+              {/* VPS DEPLOYMENT & DOCKER INSTRUCTIONS CARD */}
+              <div className="bg-[#0a0714] border border-cyan-500/30 rounded-lg p-5 space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                  <h4 className="font-bold text-cyan-300 text-xs uppercase flex items-center space-x-2">
+                    <Server className="w-4 h-4 text-cyan-400" />
+                    <span>IMPLANTAÇÃO VPS (LINUX / WINDOWS / DOCKER & MEOWHATS API)</span>
+                  </h4>
+                  <span className="px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 text-[10px] font-bold border border-cyan-500/40">
+                    SELF-HOSTED READY
+                  </span>
+                </div>
+
+                <p className="text-[11px] text-slate-300 leading-relaxed">
+                  Esta aplicação está totalmente pronta para rodar em sua própria VPS Linux ou Windows. Ao atualizar ou enviar alterações para o repositório no GitHub, a VPS é atualizada **automaticamente** via CI/CD.
+                </p>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {/* Option 1: Docker */}
+                  <div className="p-3 bg-[#05070d] border border-slate-800 rounded font-mono space-y-2">
+                    <div className="text-[11px] font-bold text-emerald-400 uppercase flex items-center space-x-1.5">
+                      <Terminal className="w-3.5 h-3.5" />
+                      <span>Opção 1: Docker Compose (1 Clique)</span>
+                    </div>
+                    <pre className="p-2 bg-[#0a0d18] rounded text-[10px] text-slate-300 overflow-x-auto border border-slate-800/80">
+                      <code>
+{`git clone https://github.com/seu-repo/optavia.git
+cd optavia
+cp .env.example .env
+nano .env # (cole sua GEMINI_API_KEY e MEOWHATS_API_TOKEN)
+docker compose up -d --build`}
+                      </code>
+                    </pre>
+                  </div>
+
+                  {/* Option 2: Linux Setup Script */}
+                  <div className="p-3 bg-[#05070d] border border-slate-800 rounded font-mono space-y-2">
+                    <div className="text-[11px] font-bold text-cyan-400 uppercase flex items-center space-x-1.5">
+                      <Terminal className="w-3.5 h-3.5" />
+                      <span>Opção 2: Script Linux Ubuntu/Debian</span>
+                    </div>
+                    <pre className="p-2 bg-[#0a0d18] rounded text-[10px] text-slate-300 overflow-x-auto border border-slate-800/80">
+                      <code>
+{`git clone https://github.com/seu-repo/optavia.git
+cd optavia
+chmod +x setup.sh
+./setup.sh`}
+                      </code>
+                    </pre>
+                  </div>
+                </div>
+
+                <div className="p-3 bg-[#111625] rounded border border-purple-500/30 text-[11px] text-slate-300 space-y-2">
+                  <div className="font-bold text-purple-300 flex items-center space-x-1">
+                    <Key className="w-3.5 h-3.5" />
+                    <span>Meowhats REST API Webhook & Atualização Automática (GitHub Actions):</span>
+                  </div>
+                  <ul className="text-[10px] text-slate-400 space-y-1 list-disc pl-4">
+                    <li>
+                      <strong className="text-cyan-300">Webhook do WhatsApp:</strong> No painel Meowhats, configure a URL de webhook para: <code className="text-amber-300">http://SEU_IP_DA_VPS:3000/api/webhooks/whatsapp</code>
+                    </li>
+                    <li>
+                      <strong className="text-emerald-300">GitHub Push-to-Deploy:</strong> O arquivo <code className="text-white">.github/workflows/deploy.yml</code> atualiza e reinicia o servidor na VPS automaticamente a cada <code className="text-white">git push</code>.
+                    </li>
+                    <li>
+                      <strong className="text-purple-300">Chaves de API Isoladas:</strong> As chaves <code className="text-white">GEMINI_API_KEY</code> e <code className="text-white">MEOWHATS_API_TOKEN</code> permanecem exclusivamente no servidor em <code className="text-white">/.env</code>.
+                    </li>
+                  </ul>
+                </div>
+              </div>
+
             </div>
           )}
         </main>

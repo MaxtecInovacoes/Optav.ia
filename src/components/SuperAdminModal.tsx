@@ -133,12 +133,29 @@ export const SuperAdminModal: React.FC<SuperAdminModalProps> = ({ onClose }) => 
             </div>
           </div>
 
-          {/* Audit Trail */}
+          {/* Audit Trail & VPS Clean State */}
           <div className="bg-[#05070B] p-4 rounded border border-slate-800 space-y-2.5">
-            <h3 className="font-bold text-slate-300 flex items-center space-x-2 text-[11px] uppercase tracking-wider">
-              <FileText className="w-3.5 h-3.5 text-indigo-400" />
-              <span>Trilha de Auditoria (Audit Logs)</span>
-            </h3>
+            <div className="flex items-center justify-between">
+              <h3 className="font-bold text-slate-300 flex items-center space-x-2 text-[11px] uppercase tracking-wider">
+                <FileText className="w-3.5 h-3.5 text-indigo-400" />
+                <span>Trilha de Auditoria & Limpeza de Base de Produção</span>
+              </h3>
+              <button
+                onClick={() => {
+                  if (window.confirm('Deseja zerar a base de dados de teste? Todos os leads fictícios serão apagados para uso 100% real.')) {
+                    fetch('/api/db/clear-mock-data', { method: 'POST' })
+                      .then((r) => r.json())
+                      .then((res) => {
+                        alert(res.message);
+                        fetchHealth();
+                      });
+                  }
+                }}
+                className="px-3 py-1 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 rounded text-[10px] font-bold cursor-pointer"
+              >
+                🗑️ Zerar Dados de Teste (Base 100% Limpa)
+              </button>
+            </div>
             <div className="space-y-1.5 max-h-40 overflow-y-auto font-mono text-[10px]">
               {data?.auditLogs?.map((log: any) => (
                 <div key={log.id} className="p-2 bg-[#0A0C14] rounded border border-slate-800/80 flex justify-between">

@@ -35,6 +35,38 @@ export class OutreachAgent extends Agent {
       promptDelta
     );
 
+    // Call Meowhats REST API if configured
+    let meowhatsDeliveryStatus = 'dry-run';
+    const meowhatsApiUrl = process.env.MEOWHATS_API_URL || 'https://api.meowhats.com/v1';
+    const meowhatsToken = process.env.MEOWHATS_API_TOKEN;
+    const meowhatsInstance = process.env.MEOWHATS_INSTANCE_ID;
+
+    if (meowhatsToken && lead.phone) {
+      try {
+        const cleanPhone = lead.phone.replace(/[^0-9]/g, '');
+        const res = await fetch(`${meowhatsApiUrl}/messages/send`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${meowhatsToken}`
+          },
+          body: JSON.stringify({
+            instanceId: meowhatsInstance,
+            phone: cleanPhone,
+            message: messageText
+          })
+        });
+        if (res.ok) {
+          meowhatsDeliveryStatus = 'delivered';
+        } else {
+          meowhatsDeliveryStatus = `error-${res.status}`;
+        }
+      } catch (err) {
+        console.warn('⚠️ Meowhats API Dispatch Error:', err);
+        meowhatsDeliveryStatus = 'network-error';
+      }
+    }
+
     const msgObj: ConversationMessage = {
       id: `msg-${Date.now()}`,
       leadId,

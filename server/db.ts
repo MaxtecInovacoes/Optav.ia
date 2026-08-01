@@ -24,9 +24,21 @@ class InMemoryDB {
   pipelineEvents: PipelineEvent[] = [];
   auditLogs: AuditLog[] = [];
   prompts: Map<string, AgentPromptVersion[]> = new Map();
+  users: Map<string, any> = new Map();
 
   constructor() {
     this.seedInitialData();
+  }
+
+  public clearAllMockData() {
+    this.leads.clear();
+    this.personas.clear();
+    this.sites.clear();
+    this.messages.clear();
+    this.decisions = [];
+    this.lostLeads = [];
+    this.pipelineEvents = [];
+    return { success: true, message: 'Base de dados limpa com sucesso. Pronta para dados reais.' };
   }
 
   private seedInitialData() {
