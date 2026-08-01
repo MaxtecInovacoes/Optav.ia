@@ -122,7 +122,7 @@ export const Navbar: React.FC<NavbarProps> = ({
         <button
           onClick={onOpenPlaybookModal}
           className="hidden md:flex items-center space-x-1 px-2.5 py-1 rounded text-xs font-mono bg-[#05070B] hover:bg-slate-800 text-cyan-300 border border-cyan-500/30 transition-colors cursor-pointer"
-          title="Auditoria Playbook FRALIB (8-Stage Pipeline)"
+          title="Auditoria Playbook OPTAV.IA (8-Stage Pipeline)"
         >
           <Zap className="w-3.5 h-3.5 text-cyan-400" />
           <span>Playbook 8-Stage</span>

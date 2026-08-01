@@ -11,8 +11,11 @@ import {
   AuditLog,
   AgentPromptVersion
 } from '../src/types/index.js';
+import { AdminUser, AdminSession } from '../src/types/admin.js';
+import { getPostgresPool, initPostgresTables } from './db/postgres.js';
+import { logger } from './logger.js';
 
-class InMemoryDB {
+class IntegratedDB {
   tenants: Map<string, Tenant> = new Map();
   leads: Map<string, Lead> = new Map();
   personas: Map<string, PersonaData> = new Map();
@@ -24,31 +27,461 @@ class InMemoryDB {
   pipelineEvents: PipelineEvent[] = [];
   auditLogs: AuditLog[] = [];
   prompts: Map<string, AgentPromptVersion[]> = new Map();
-  users: Map<string, any> = new Map();
+  admins: Map<string, AdminUser> = new Map();
+  sessions: Map<string, AdminSession> = new Map();
+  caktoEventsList: any[] = [];
+  lidMap: Map<string, string> = new Map();
+
+  private pgConnected = false;
 
   constructor() {
     this.seedInitialData();
   }
 
-  public clearAllMockData() {
-    this.leads.clear();
-    this.personas.clear();
-    this.sites.clear();
-    this.messages.clear();
-    this.decisions = [];
-    this.lostLeads = [];
-    this.pipelineEvents = [];
-    return { success: true, message: 'Base de dados limpa com sucesso. Pronta para dados reais.' };
+  async init(): Promise<void> {
+    try {
+      const ok = await initPostgresTables();
+      if (ok) {
+        this.pgConnected = true;
+        logger.info('[DB] PostgreSQL initialized successfully. Operating in SQL persistence mode.');
+        await this.syncMemoryToPg();
+      } else {
+        logger.info('[DB] Operating in dual memory mode.');
+      }
+    } catch (err) {
+      logger.warn({ err }, '[DB] Postgres initialization error. Falling back to memory mode.');
+    }
+  }
+
+  private async syncMemoryToPg(): Promise<void> {
+    if (!this.pgConnected) return;
+    try {
+      const pool = getPostgresPool();
+      // Sync default tenant
+      for (const tenant of this.tenants.values()) {
+        await pool.query(
+          `INSERT INTO tenants (id, name, segment, region, plan, sdr_config, whatsapp_connected)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           ON CONFLICT (id) DO NOTHING`,
+          [tenant.id, tenant.name, tenant.segment, tenant.region, tenant.plan, JSON.stringify(tenant.sdrConfig), tenant.whatsappConnected]
+        );
+      }
+      // Sync sample leads
+      for (const lead of this.leads.values()) {
+        await pool.query(
+          `INSERT INTO leads (id, tenant_id, name, category, segment, phone, address, rating, reviews_count, has_website, site_health_score, pipeline_status, pipeline_stage, reviews_sample)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+           ON CONFLICT (id) DO NOTHING`,
+          [
+            lead.id, lead.tenantId, lead.name, lead.category, lead.segment, lead.phone, lead.address,
+            lead.rating, lead.reviewsCount, lead.hasWebsite, lead.siteHealthScore, lead.pipelineStatus,
+            lead.pipelineStage, JSON.stringify(lead.reviewsSample || [])
+          ]
+        );
+      }
+    } catch (err) {
+      logger.warn({ err }, '[DB Sync] Error syncing memory seed to PostgreSQL');
+    }
+  }
+
+  // Tenant methods
+  async getAllTenants(): Promise<Tenant[]> {
+    if (this.pgConnected) {
+      try {
+        const pool = getPostgresPool();
+        const res = await pool.query('SELECT * FROM tenants');
+        if (res.rows.length > 0) {
+          return res.rows.map(r => ({
+            id: r.id,
+            name: r.name,
+            segment: r.segment,
+            region: r.region,
+            plan: r.plan,
+            targetQueueGoal: r.target_queue_goal,
+            minQueueThreshold: r.min_queue_threshold,
+            autoRefillEnabled: r.auto_refill_enabled,
+            sdrConfig: typeof r.sdr_config === 'string' ? JSON.parse(r.sdr_config) : r.sdr_config,
+            whatsappConnected: r.whatsapp_connected,
+            createdAt: r.created_at?.toISOString ? r.created_at.toISOString() : r.created_at
+          }));
+        }
+      } catch (err) {
+        logger.error({ err }, '[DB] PostgreSQL query failed for getAllTenants');
+      }
+    }
+    return Array.from(this.tenants.values());
+  }
+
+  async getTenantById(id: string): Promise<Tenant | undefined> {
+    if (this.pgConnected) {
+      try {
+        const pool = getPostgresPool();
+        const res = await pool.query('SELECT * FROM tenants WHERE id = $1', [id]);
+        if (res.rows[0]) {
+          const r = res.rows[0];
+          return {
+            id: r.id,
+            name: r.name,
+            segment: r.segment,
+            region: r.region,
+            plan: r.plan,
+            targetQueueGoal: r.target_queue_goal,
+            minQueueThreshold: r.min_queue_threshold,
+            autoRefillEnabled: r.auto_refill_enabled,
+            sdrConfig: typeof r.sdr_config === 'string' ? JSON.parse(r.sdr_config) : r.sdr_config,
+            whatsappConnected: r.whatsapp_connected,
+            createdAt: r.created_at?.toISOString ? r.created_at.toISOString() : r.created_at
+          };
+        }
+      } catch (err) {
+        logger.error({ err }, '[DB] PostgreSQL query failed for getTenantById');
+      }
+    }
+    return this.tenants.get(id);
+  }
+
+  async createTenant(tenant: Tenant): Promise<Tenant> {
+    this.tenants.set(tenant.id, tenant);
+    if (this.pgConnected) {
+      try {
+        const pool = getPostgresPool();
+        await pool.query(
+          `INSERT INTO tenants (id, name, segment, region, plan, target_queue_goal, min_queue_threshold, auto_refill_enabled, sdr_config, whatsapp_connected)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+          [
+            tenant.id, tenant.name, tenant.segment, tenant.region, tenant.plan,
+            tenant.targetQueueGoal || 300, tenant.minQueueThreshold || 50, tenant.autoRefillEnabled || false,
+            JSON.stringify(tenant.sdrConfig), tenant.whatsappConnected
+          ]
+        );
+      } catch (err) {
+        logger.error({ err }, '[DB] PostgreSQL insert failed for createTenant');
+      }
+    }
+    return tenant;
+  }
+
+  async updateTenant(id: string, updates: Partial<Tenant>): Promise<Tenant | undefined> {
+    const existing = await this.getTenantById(id);
+    if (!existing) return undefined;
+    const updated = { ...existing, ...updates };
+    this.tenants.set(id, updated);
+    if (this.pgConnected) {
+      try {
+        const pool = getPostgresPool();
+        await pool.query(
+          `UPDATE tenants SET name = $1, plan = $2, target_queue_goal = $3, min_queue_threshold = $4, sdr_config = $5, whatsapp_connected = $6 WHERE id = $7`,
+          [updated.name, updated.plan, updated.targetQueueGoal, updated.minQueueThreshold, JSON.stringify(updated.sdrConfig), updated.whatsappConnected, id]
+        );
+      } catch (err) {
+        logger.error({ err }, '[DB] PostgreSQL update failed for updateTenant');
+      }
+    }
+    return updated;
+  }
+
+  async updateTenantPlanByEmail(email: string, plan: 'free' | 'pro' | 'enterprise' | 'growth'): Promise<void> {
+    for (const tenant of this.tenants.values()) {
+      if (tenant.name.toLowerCase().includes(email.toLowerCase()) || email.includes(tenant.id)) {
+        tenant.plan = plan;
+        this.tenants.set(tenant.id, tenant);
+      }
+    }
+    if (this.pgConnected) {
+      try {
+        const pool = getPostgresPool();
+        await pool.query('UPDATE tenants SET plan = $1 WHERE name ILIKE $2', [plan, `%${email}%`]);
+      } catch (err) {
+        logger.error({ err }, '[DB] PostgreSQL update failed for updateTenantPlanByEmail');
+      }
+    }
+  }
+
+  // Lead methods
+  async getAllLeads(tenantId?: string): Promise<Lead[]> {
+    if (this.pgConnected) {
+      try {
+        const pool = getPostgresPool();
+        const res = tenantId
+          ? await pool.query('SELECT * FROM leads WHERE tenant_id = $1 ORDER BY created_at DESC', [tenantId])
+          : await pool.query('SELECT * FROM leads ORDER BY created_at DESC');
+        if (res.rows.length > 0) {
+          return res.rows.map(r => ({
+            id: r.id,
+            tenantId: r.tenant_id,
+            name: r.name,
+            category: r.category,
+            segment: r.segment,
+            phone: r.phone,
+            email: r.email,
+            address: r.address,
+            openingHours: r.opening_hours,
+            existingSiteUrl: r.existing_site_url,
+            rating: r.rating ? Number(r.rating) : undefined,
+            reviewsCount: r.reviews_count,
+            hasWebsite: r.has_website,
+            siteHealthScore: r.site_health_score,
+            qualificationScore: r.qualification_score,
+            qualificationReason: r.qualification_reason,
+            isDisqualified: r.is_disqualified,
+            disqualificationReason: r.disqualification_reason,
+            manualOverride: r.manual_override,
+            emailSent: r.email_sent,
+            pipelineStatus: r.pipeline_status,
+            pipelineStage: r.pipeline_stage,
+            saleValue: r.sale_value ? Number(r.sale_value) : undefined,
+            siteUrl: r.site_url,
+            reviewsSample: typeof r.reviews_sample === 'string' ? JSON.parse(r.reviews_sample) : r.reviews_sample || [],
+            createdAt: r.created_at?.toISOString ? r.created_at.toISOString() : r.created_at
+          }));
+        }
+      } catch (err) {
+        logger.error({ err }, '[DB] PostgreSQL query failed for getAllLeads');
+      }
+    }
+
+    const all = Array.from(this.leads.values());
+    if (tenantId) {
+      return all.filter(l => l.tenantId === tenantId);
+    }
+    return all;
+  }
+
+  async getLeadById(id: string): Promise<Lead | undefined> {
+    if (this.pgConnected) {
+      try {
+        const pool = getPostgresPool();
+        const res = await pool.query('SELECT * FROM leads WHERE id = $1', [id]);
+        if (res.rows[0]) {
+          const r = res.rows[0];
+          return {
+            id: r.id,
+            tenantId: r.tenant_id,
+            name: r.name,
+            category: r.category,
+            segment: r.segment,
+            phone: r.phone,
+            email: r.email,
+            address: r.address,
+            openingHours: r.opening_hours,
+            existingSiteUrl: r.existing_site_url,
+            rating: r.rating ? Number(r.rating) : undefined,
+            reviewsCount: r.reviews_count,
+            hasWebsite: r.has_website,
+            siteHealthScore: r.site_health_score,
+            qualificationScore: r.qualification_score,
+            pipelineStatus: r.pipeline_status,
+            pipelineStage: r.pipeline_stage,
+            saleValue: r.sale_value ? Number(r.sale_value) : undefined,
+            siteUrl: r.site_url,
+            reviewsSample: typeof r.reviews_sample === 'string' ? JSON.parse(r.reviews_sample) : r.reviews_sample || [],
+            createdAt: r.created_at?.toISOString ? r.created_at.toISOString() : r.created_at
+          };
+        }
+      } catch (err) {
+        logger.error({ err }, '[DB] PostgreSQL query failed for getLeadById');
+      }
+    }
+    return this.leads.get(id);
+  }
+
+  async getLeadByPhone(tenantId: string, phone: string): Promise<Lead | undefined> {
+    const cleanPhone = phone.replace(/\D/g, '');
+    const all = await this.getAllLeads(tenantId);
+    return all.find(l => l.phone.replace(/\D/g, '').includes(cleanPhone) || cleanPhone.includes(l.phone.replace(/\D/g, '')));
+  }
+
+  async saveLead(lead: Lead): Promise<Lead> {
+    this.leads.set(lead.id, lead);
+    if (this.pgConnected) {
+      try {
+        const pool = getPostgresPool();
+        await pool.query(
+          `INSERT INTO leads (id, tenant_id, name, category, segment, phone, address, rating, reviews_count, has_website, site_health_score, pipeline_status, pipeline_stage, reviews_sample)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+           ON CONFLICT (id) DO UPDATE SET
+             pipeline_status = EXCLUDED.pipeline_status,
+             pipeline_stage = EXCLUDED.pipeline_stage,
+             site_url = EXCLUDED.site_url`,
+          [
+            lead.id, lead.tenantId, lead.name, lead.category, lead.segment, lead.phone, lead.address,
+            lead.rating, lead.reviewsCount, lead.hasWebsite, lead.siteHealthScore, lead.pipelineStatus,
+            lead.pipelineStage, JSON.stringify(lead.reviewsSample || [])
+          ]
+        );
+      } catch (err) {
+        logger.error({ err }, '[DB] PostgreSQL save failed for saveLead');
+      }
+    }
+    return lead;
+  }
+
+  // Persona methods
+  async savePersona(persona: PersonaData): Promise<PersonaData> {
+    this.personas.set(persona.leadId, persona);
+    return persona;
+  }
+
+  async getPersonaByLeadId(leadId: string): Promise<PersonaData | undefined> {
+    return this.personas.get(leadId);
+  }
+
+  // Site methods
+  async saveSite(site: SiteData): Promise<SiteData> {
+    this.sites.set(site.leadId, site);
+    return site;
+  }
+
+  async getSiteByLeadId(leadId: string): Promise<SiteData | undefined> {
+    return this.sites.get(leadId);
+  }
+
+  // Message methods
+  async getMessagesByLeadId(leadId: string): Promise<ConversationMessage[]> {
+    return this.messages.get(leadId) || [];
+  }
+
+  async addMessage(msg: ConversationMessage): Promise<ConversationMessage> {
+    const list = this.messages.get(msg.leadId) || [];
+    list.push(msg);
+    this.messages.set(msg.leadId, list);
+    return msg;
+  }
+
+  // Admin and Auth methods
+  async getAdminByEmail(email: string): Promise<AdminUser | undefined> {
+    for (const adm of this.admins.values()) {
+      if (adm.email === email) return adm;
+    }
+    if (this.pgConnected) {
+      try {
+        const pool = getPostgresPool();
+        const res = await pool.query('SELECT * FROM admins WHERE email = $1', [email]);
+        if (res.rows[0]) {
+          const r = res.rows[0];
+          return {
+            id: r.id,
+            email: r.email,
+            name: r.name,
+            passwordHash: r.password_hash,
+            role: r.role,
+            tenantId: r.tenant_id,
+            isActive: r.is_active,
+            createdAt: r.created_at?.toISOString ? r.created_at.toISOString() : r.created_at
+          };
+        }
+      } catch (err) {
+        logger.error({ err }, '[DB] PostgreSQL query failed for getAdminByEmail');
+      }
+    }
+    return undefined;
+  }
+
+  async getAdminById(id: string): Promise<AdminUser | undefined> {
+    if (this.admins.has(id)) return this.admins.get(id);
+    if (this.pgConnected) {
+      try {
+        const pool = getPostgresPool();
+        const res = await pool.query('SELECT * FROM admins WHERE id = $1', [id]);
+        if (res.rows[0]) {
+          const r = res.rows[0];
+          return {
+            id: r.id,
+            email: r.email,
+            name: r.name,
+            passwordHash: r.password_hash,
+            role: r.role,
+            tenantId: r.tenant_id,
+            isActive: r.is_active,
+            createdAt: r.created_at?.toISOString ? r.created_at.toISOString() : r.created_at
+          };
+        }
+      } catch (err) {
+        logger.error({ err }, '[DB] PostgreSQL query failed for getAdminById');
+      }
+    }
+    return undefined;
+  }
+
+  async createAdmin(admin: AdminUser): Promise<AdminUser> {
+    this.admins.set(admin.id, admin);
+    if (this.pgConnected) {
+      try {
+        const pool = getPostgresPool();
+        await pool.query(
+          `INSERT INTO admins (id, email, name, password_hash, role, tenant_id, is_active)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [admin.id, admin.email, admin.name, admin.passwordHash, admin.role, admin.tenantId || 'tenant-1', admin.isActive]
+        );
+      } catch (err) {
+        logger.error({ err }, '[DB] PostgreSQL insert failed for createAdmin');
+      }
+    }
+    return admin;
+  }
+
+  async saveSession(session: AdminSession): Promise<AdminSession> {
+    this.sessions.set(session.token, session);
+    return session;
+  }
+
+  async getSessionByRefreshToken(refreshToken: string): Promise<AdminSession | undefined> {
+    for (const sess of this.sessions.values()) {
+      if (sess.refreshToken === refreshToken) return sess;
+    }
+    return undefined;
+  }
+
+  async deleteSessionByToken(token: string): Promise<void> {
+    this.sessions.delete(token);
+  }
+
+  // Cakto Event Tracking
+  async saveCaktoEvent(eventId: string, tenantId: string, eventType: string, payload: any): Promise<boolean> {
+    if (this.caktoEventsList.some(e => e.caktoEventId === eventId)) {
+      return false;
+    }
+    this.caktoEventsList.push({ id: `cakto-${Date.now()}`, caktoEventId: eventId, tenantId, eventType, payload, createdAt: new Date().toISOString() });
+    if (this.pgConnected) {
+      try {
+        const pool = getPostgresPool();
+        const res = await pool.query(
+          `INSERT INTO cakto_events (id, cakto_event_id, tenant_id, event_type, payload)
+           VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (cakto_event_id) DO NOTHING
+           RETURNING id`,
+          [`cakto-${Date.now()}`, eventId, tenantId, eventType, JSON.stringify(payload)]
+        );
+        return res.rows.length > 0;
+      } catch (err) {
+        logger.error({ err }, '[DB] PostgreSQL insert failed for saveCaktoEvent');
+      }
+    }
+    return true;
+  }
+
+  async getCaktoEvents(): Promise<any[]> {
+    return this.caktoEventsList;
+  }
+
+  // WhatsApp LID map
+  async getPhoneFromLid(lid: string): Promise<string | undefined> {
+    return this.lidMap.get(lid);
+  }
+
+  async setLidPhoneMapping(lid: string, phone: string): Promise<void> {
+    this.lidMap.set(lid, phone);
   }
 
   private seedInitialData() {
-    // Initial Tenant
     const defaultTenant: Tenant = {
       id: 'tenant-1',
       name: 'Agência Digital Elite',
       segment: 'restaurante',
       region: 'São Paulo, SP',
       plan: 'pro',
+      targetQueueGoal: 300,
+      minQueueThreshold: 50,
       sdrConfig: {
         sdrType: 'custom',
         name: 'Camila Santos',
@@ -61,22 +494,6 @@ class InMemoryDB {
     };
     this.tenants.set(defaultTenant.id, defaultTenant);
 
-    // Initial Prompts
-    const initialAgents = ['ScraperAgent', 'PersonaAgent', 'SiteBuilderAgent', 'OutreachAgent', 'LearnerAgent', 'SDRAgent'];
-    initialAgents.forEach((agent) => {
-      this.prompts.set(agent, [
-        {
-          id: `p-${agent}-v1`,
-          agent,
-          version: 1,
-          promptText: `System prompt base para ${agent}. Foco em alta conversão e precisão sem alucinação de dados.`,
-          active: true,
-          updatedAt: new Date().toISOString()
-        }
-      ]);
-    });
-
-    // Seed Leads
     const sampleLeads: Partial<Lead>[] = [
       {
         id: 'lead-101',
@@ -89,7 +506,7 @@ class InMemoryDB {
         rating: 4.6,
         reviewsCount: 184,
         hasWebsite: true,
-        siteHealthScore: 32, // Sites velhos precisam de novo site!
+        siteHealthScore: 32,
         pipelineStatus: 'lead_quente',
         pipelineStage: 'completed',
         saleValue: 1800,
@@ -126,205 +543,23 @@ class InMemoryDB {
           { author: 'Juliana P.', text: 'Atendimento impecável! Queria ter agendado online antes de ir.', rating: 5, date: 'há 3 dias' }
         ],
         createdAt: new Date(Date.now() - 86400000 * 3).toISOString()
-      },
-      {
-        id: 'lead-103',
-        tenantId: 'tenant-1',
-        name: 'Auto Center Mecânica Express',
-        category: 'Oficina Mecânica',
-        segment: 'oficina',
-        phone: '+55 11 99887-1122',
-        address: 'Av. Santo Amaro, 3400 - Brooklin, São Paulo - SP',
-        rating: 4.2,
-        reviewsCount: 65,
-        hasWebsite: true,
-        siteHealthScore: 41,
-        pipelineStatus: 'aguardando',
-        pipelineStage: 'messaged',
-        siteUrl: 'https://mecanica-express.optav.ia',
-        siteCreatedAt: new Date(Date.now() - 86400000).toISOString(),
-        siteDeployedAt: new Date(Date.now() - 86400000).toISOString(),
-        lastMessageAt: new Date(Date.now() - 3600000 * 12).toISOString(),
-        reviewsSample: [
-          { author: 'Roberto S.', text: 'Resolveram o barulho da suspensão rápido. Falta um site com a tabela de serviços.', rating: 4, date: 'há 5 dias' }
-        ],
-        createdAt: new Date(Date.now() - 86400000 * 2).toISOString()
-      },
-      {
-        id: 'lead-104',
-        tenantId: 'tenant-1',
-        name: 'Bistro Gourmet Jardin',
-        category: 'Restaurante',
-        segment: 'restaurante',
-        phone: '+55 11 96543-9900',
-        address: 'Rua Oscar Freire, 890 - Jardins, São Paulo - SP',
-        rating: 4.9,
-        reviewsCount: 310,
-        hasWebsite: false,
-        siteHealthScore: 0,
-        pipelineStatus: 'followup_2',
-        pipelineStage: 'messaged',
-        siteUrl: 'https://bistro-gourmet-jardin.optav.ia',
-        siteCreatedAt: new Date(Date.now() - 86400000 * 5).toISOString(),
-        siteDeployedAt: new Date(Date.now() - 86400000 * 5).toISOString(),
-        lastMessageAt: new Date(Date.now() - 86400000 * 2).toISOString(),
-        reviewsSample: [
-          { author: 'Mariana K.', text: 'Experiência gastronômica surreal! Precisa ter reserva fácil online.', rating: 5, date: 'há 1 dia' }
-        ],
-        createdAt: new Date(Date.now() - 86400000 * 6).toISOString()
-      },
-      {
-        id: 'lead-105',
-        tenantId: 'tenant-1',
-        name: 'Barbearia Vintage Club',
-        category: 'Serviços de Estética',
-        segment: 'servicos',
-        phone: '+55 11 95432-1100',
-        address: 'Rua Pinheiros, 600 - Pinheiros, São Paulo - SP',
-        rating: 4.7,
-        reviewsCount: 140,
-        hasWebsite: true,
-        siteHealthScore: 28,
-        pipelineStatus: 'perdido',
-        pipelineStage: 'completed',
-        siteUrl: 'https://barbearia-vintage-club.optav.ia',
-        siteCreatedAt: new Date(Date.now() - 86400000 * 7).toISOString(),
-        reviewsSample: [
-          { author: 'Lucas V.', text: 'Corte de cabelo nota 10, ambiente top!', rating: 5, date: 'há 2 semanas' }
-        ],
-        createdAt: new Date(Date.now() - 86400000 * 8).toISOString()
       }
     ];
 
     sampleLeads.forEach((l) => this.leads.set(l.id!, l as Lead));
 
-    // Seed Lost Record for Lead 105
-    this.lostLeads.push({
-      id: 'lost-1',
-      leadId: 'lead-105',
-      tenantId: 'tenant-1',
-      reason: 'preço',
-      notes: 'Achou o orçamento de R$ 1.500 alto para o momento.',
-      valueLost: 1500,
-      lostAt: new Date(Date.now() - 86400000 * 6).toISOString()
-    });
-
-    // Seed Sample Site for Cantina Bella Italia
-    this.sites.set('lead-101', {
-      leadId: 'lead-101',
-      template: 'restaurante',
-      copy: {
-        heroTitle: 'Autêntica Gastronomia Italiana no Coração de São Paulo',
-        heroSubtitle: 'Massas artesanais preparadas diariamente com ingredientes importados e receitas de família.',
-        aboutText: 'Com mais de 15 anos de tradição na Consolação, a Cantina Bella Italia une acolhimento, sabor inesquecível e uma carta de vinhos selecionados.',
-        ctaText: 'Garantir Reserva de Mesa',
-        guaranteeText: 'Atendimento exclusivo e ambiente climatizado.'
-      },
-      colors: {
-        primary: '#b91c1c',
-        secondary: '#15803d',
-        accent: '#eab308',
-        background: '#fffbe1'
-      },
-      fonts: { display: 'Playfair Display', body: 'Plus Jakarta Sans' },
-      images: {
-        hero: 'https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=1200&q=80',
-        about: 'https://images.unsplash.com/photo-1551183053-bf91a1d81141?auto=format&fit=crop&w=800&q=80',
-        gallery: [
-          'https://images.unsplash.com/photo-1565299624946-b28f40a0ae38?auto=format&fit=crop&w=600&q=80',
-          'https://images.unsplash.com/photo-1579684385127-1ef15d508118?auto=format&fit=crop&w=600&q=80'
-        ]
-      },
-      sections: [
-        { id: 's-hero', type: 'hero', title: 'Autêntica Gastronomia Italiana no Coração de São Paulo', subtitle: 'Massas artesanais preparadas diariamente com ingredientes importados.' },
-        {
-          id: 's-services',
-          type: 'services',
-          title: 'Nosso Cardápio Destaque',
-          subtitle: 'Pratos recomendados pelos nossos clientes',
-          items: [
-            { title: 'Fettuccine ao Tartufo', description: 'Massa fresca artesanal com trufas negras e parmesão reggiano', price: 'R$ 89,00' },
-            { title: 'Lasagna della Nonna', description: 'Camadas generosas com ragù di carne 12 horas', price: 'R$ 78,00' },
-            { title: 'Tiramisù Tradizionale', description: 'Café espresso, mascarpone e cacau em pó italiano', price: 'R$ 32,00' }
-          ]
-        },
-        {
-          id: 's-testimonials',
-          type: 'testimonials',
-          title: 'O Que Dizem Nossos Clientes',
-          subtitle: 'Avaliações reais extraídas do Google Maps',
-          items: [
-            { title: 'Carlos M.', description: 'Massa artesanal excelente e atendimento acolhedor!' },
-            { title: 'Fernanda R.', description: 'Ambiente charmoso, perfeito para jantares a dois.' }
-          ]
-        },
-        { id: 's-cta', type: 'cta', title: 'Pronto para uma Experiência Gastronômica Única?', subtitle: 'Faça sua reserva pelo WhatsApp em poucos segundos.' }
-      ],
-      deployedUrl: 'https://cantina-bella-italia.optav.ia',
-      deployedAt: new Date(Date.now() - 86400000 * 3).toISOString(),
-      version: 1
-    });
-
-    // Seed Messages
     this.messages.set('lead-101', [
       {
         id: 'm-1',
         leadId: 'lead-101',
         tenantId: 'tenant-1',
         role: 'sdr',
-        text: 'Olá! Sou a Camila da Agência Digital Elite. Notamos que a Cantina Bella Italia tem 4.6 estrelas com mais de 180 avaliações no Google! Criamos uma prévia de um site moderno com reserva online para vocês: https://cantina-bella-italia.optav.ia. O que achou?',
+        text: 'Olá! Sou a Camila da Agência Digital Elite. Notamos que a Cantina Bella Italia tem 4.6 estrelas no Google! Criamos uma prévia de um site moderno com reserva online: https://cantina-bella-italia.optav.ia. O que achou?',
         sentAt: new Date(Date.now() - 3600000 * 2).toISOString(),
         sdrName: 'Camila Santos'
-      },
-      {
-        id: 'm-2',
-        leadId: 'lead-101',
-        tenantId: 'tenant-1',
-        role: 'lead',
-        text: 'Nossa, que rápido! Gostei bastante das fotos da massa. Quanto custa para colocar no nosso domínio próprio?',
-        sentAt: new Date(Date.now() - 3600000).toISOString(),
-        sdrName: 'Cantina Bella Italia'
       }
     ]);
-
-    // Seed Initial Learner Patterns
-    this.learnings = [
-      {
-        id: 'lr-1',
-        pattern: 'Restaurantes em SP com nota > 4.5 e site antigo convertem +42% quando o tom da mensagem enfatiza reservas de mesa pelo WhatsApp.',
-        agent: 'OutreachAgent',
-        scope: 'segment',
-        segment: 'restaurante',
-        region: 'São Paulo, SP',
-        confidence: 0.94,
-        nExamples: 38,
-        promptDelta: 'Para restaurantes com boas avaliações, mencione explicitamente a facilidade de reservas via WhatsApp no primeiro parágrafo.',
-        active: true,
-        createdAt: new Date(Date.now() - 86400000 * 2).toISOString()
-      },
-      {
-        id: 'lr-2',
-        pattern: 'Clínicas Odontológicas sem site possuem taxa de abertura de 68% quando a prévia exibe botão flutuante de agendamento.',
-        agent: 'SiteBuilderAgent',
-        scope: 'segment',
-        segment: 'clinica',
-        confidence: 0.88,
-        nExamples: 24,
-        promptDelta: 'Para clínicas de saúde/odontologia, adicione sempre o CTA de "Agendamento Rápido" destacado na primeira dobra.',
-        active: true,
-        createdAt: new Date(Date.now() - 86400000 * 4).toISOString()
-      }
-    ];
-
-    // Seed Audit Logs
-    this.auditLogs.push({
-      id: 'al-1',
-      actor: 'Sistema Automatico',
-      action: 'Ciclo Diario de Aprendizado',
-      details: 'Learner Agent analisou 48 decisões e extraiu 2 novos padrões de conversão.',
-      timestamp: new Date(Date.now() - 86400000).toISOString()
-    });
   }
 }
 
-export const db = new InMemoryDB();
+export const db = new IntegratedDB();

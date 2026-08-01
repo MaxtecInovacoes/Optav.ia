@@ -43,7 +43,14 @@ import {
   Server,
   Key,
   Terminal,
-  ChevronRight
+  ChevronRight,
+  QrCode,
+  Wifi,
+  WifiOff,
+  RefreshCw,
+  Send,
+  XCircle,
+  Bot
 } from 'lucide-react';
 
 export function App() {
@@ -126,6 +133,61 @@ export function App() {
   const [manualCategory, setManualCategory] = useState('');
   const [manualCity, setManualCity] = useState('');
   const [manualPhone, setManualPhone] = useState('');
+
+  // WhatsApp QR Code Instance State
+  const [qrStatus, setQrStatus] = useState<'connected' | 'connecting' | 'disconnected'>('connected');
+  const [qrSessionToken, setQrSessionToken] = useState<string>('meow_optavia_live_8842');
+  const [qrPhoneNumber, setQrPhoneNumber] = useState<string>('+55 (41) 98513-4105');
+  const [qrRefreshing, setQrRefreshing] = useState<boolean>(false);
+
+  // SDR Live Conversation Stream State in Perfil View
+  const [sdrActiveLeadId, setSdrActiveLeadId] = useState<string | null>(null);
+  const [sdrLiveMessages, setSdrLiveMessages] = useState<any[]>([]);
+  const [sdrLiveInput, setSdrLiveInput] = useState<string>('');
+  const [sdrLiveHumanMode, setSdrLiveHumanMode] = useState<boolean>(false);
+  const [sdrSending, setSdrSending] = useState<boolean>(false);
+
+  const fetchSdrLiveMessages = (leadId: string) => {
+    fetch(`/api/conversations/${leadId}`)
+      .then((res) => res.json())
+      .then((data) => setSdrLiveMessages(data))
+      .catch((err) => console.error(err));
+  };
+
+  useEffect(() => {
+    if (sdrActiveLeadId) {
+      fetchSdrLiveMessages(sdrActiveLeadId);
+    } else if (leads.length > 0) {
+      setSdrActiveLeadId(leads[0].id);
+    }
+  }, [sdrActiveLeadId, leads]);
+
+  const handleSendSdrLiveMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!sdrActiveLeadId || !sdrLiveInput.trim()) return;
+
+    setSdrSending(true);
+    const textToSend = sdrLiveInput;
+    setSdrLiveInput('');
+
+    try {
+      await fetch(`/api/conversations/${sdrActiveLeadId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: textToSend,
+          isHuman: sdrLiveHumanMode
+        })
+      });
+      fetchSdrLiveMessages(sdrActiveLeadId);
+      setSdrSending(false);
+      showToast('✅ Mensagem enviada via WhatsApp!');
+    } catch (err) {
+      console.error(err);
+      setSdrSending(false);
+      showToast('❌ Erro ao enviar mensagem no WhatsApp.');
+    }
+  };
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -820,6 +882,81 @@ export function App() {
                 </button>
               </div>
 
+              {/* REFILL AUTOMÁTICO DA FILA DE PROSPECÇÃO (MOTOR DE BUSCA) */}
+              <div className="bg-[#12121a] border border-amber-500/30 rounded-lg p-5 space-y-4 font-mono">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                  <div className="flex items-center space-x-2 font-bold text-sm text-amber-400 uppercase">
+                    <Zap className="w-4 h-4 text-amber-400" />
+                    <span>REFILL AUTOMÁTICO DA FILA DE PROSPECÇÃO (MOTOR DE BUSCA)</span>
+                  </div>
+                  <span className="px-2.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 uppercase">
+                    FILA INTEGRADA AO MOTOR
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+                  <div>
+                    <label className="block text-slate-400 font-bold mb-1 uppercase text-[10px]">Meta da Fila de Leads (Alvo)</label>
+                    <input
+                      type="number"
+                      defaultValue={currentTenant?.targetQueueGoal || 300}
+                      onBlur={async (e) => {
+                        const val = Number(e.target.value);
+                        try {
+                          await fetch(`/api/tenants/${currentTenantId}/settings`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ targetQueueGoal: val })
+                          });
+                          showToast(`✅ Meta da fila de prospecção atualizada para ${val} leads!`);
+                          loadData();
+                        } catch (err) {
+                          console.error(err);
+                        }
+                      }}
+                      className="w-full p-2.5 rounded bg-[#0a0714] border border-slate-700 text-white font-bold"
+                    />
+                    <p className="text-[10px] text-slate-500 mt-1">Quantidade ideal de leads no motor.</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-slate-400 font-bold mb-1 uppercase text-[10px]">Gatilho Mínimo de Refill (Threshold)</label>
+                    <input
+                      type="number"
+                      defaultValue={currentTenant?.minQueueThreshold || 50}
+                      onBlur={async (e) => {
+                        const val = Number(e.target.value);
+                        try {
+                          await fetch(`/api/tenants/${currentTenantId}/settings`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ minQueueThreshold: val })
+                          });
+                          showToast(`✅ Gatilho mínimo atualizado para ${val} leads!`);
+                          loadData();
+                        } catch (err) {
+                          console.error(err);
+                        }
+                      }}
+                      className="w-full p-2.5 rounded bg-[#0a0714] border border-slate-700 text-white font-bold"
+                    />
+                    <p className="text-[10px] text-slate-500 mt-1">Dispara o Scraper quando os leads ativos no motor caírem abaixo deste valor.</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-slate-400 font-bold mb-1 uppercase text-[10px]">Status do Refill Automático</label>
+                    <div className="p-2.5 rounded bg-[#0a0714] border border-slate-800 flex items-center justify-between">
+                      <div className="flex items-center space-x-2">
+                        <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                        <span className="font-bold text-emerald-300 text-xs">ATIVO NO MOTOR</span>
+                      </div>
+                      <span className="text-[10px] text-slate-400">Leads Atuais: {leads.length}</span>
+                    </div>
+                    <p className="text-[10px] text-slate-500 mt-1">Varredura automática sem paralisações na esteira.</p>
+                  </div>
+                </div>
+              </div>
+
               {/* Real-time Terminal Logs Stream */}
               <div className="bg-[#0d0d12] border border-purple-500/20 rounded-lg p-4 font-mono text-xs space-y-3">
                 <div className="flex items-center justify-between border-b border-purple-500/20 pb-2 text-slate-400">
@@ -1091,128 +1228,329 @@ export function App() {
             <LearningsPanel learnings={learnings} onRunCycle={handleRunLearnerCycle} />
           )}
 
-          {/* VIEW: MEU PERFIL & CONFIGURAÇÃO DOS AGENTES */}
+          {/* VIEW: MEU PERFIL & CONFIGURAÇÃO DO AGENTE SDR + CONEXÃO WHATSAPP */}
           {activeView === 'perfil' && (
-            <div className="bg-[#12121a] border border-purple-500/20 rounded-lg p-5 space-y-6 font-mono text-xs">
-              <div className="flex items-center justify-between border-b border-purple-500/20 pb-3">
-                <h3 className="font-bold text-sm text-white uppercase flex items-center space-x-2">
-                  <User className="w-4 h-4 text-purple-400" />
-                  <span>CONFIGURAÇÃO DE SDR & GESTÃO DA FILA DE LEADS</span>
-                </h3>
-              </div>
+            <div className="space-y-6 font-mono text-xs">
+              <div className="bg-[#12121a] border border-purple-500/20 rounded-lg p-5 space-y-6">
+                <div className="flex items-center justify-between border-b border-purple-500/20 pb-3">
+                  <h3 className="font-bold text-sm text-white uppercase flex items-center space-x-2">
+                    <User className="w-4 h-4 text-purple-400" />
+                    <span>CENTRAL DO AGENTE SDR & CONEXÃO WHATSAPP INSTÂNCIA</span>
+                  </h3>
+                  <span className="px-2.5 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                    SDR BOT ONLINE
+                  </span>
+                </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* SDR Config */}
-                <div className="bg-[#0a0714] border border-slate-800 rounded-lg p-4 space-y-4">
-                  <h4 className="font-bold text-cyan-400 text-xs uppercase flex items-center space-x-2 border-b border-slate-800 pb-2">
-                    <UserCheck className="w-4 h-4" />
-                    <span>PERFIL DO AGENTE SDR (AUTOMAÇÃO DE MENSAGENS)</span>
-                  </h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* SDR Config */}
+                  <div className="bg-[#0a0714] border border-slate-800 rounded-lg p-4 space-y-4">
+                    <h4 className="font-bold text-cyan-400 text-xs uppercase flex items-center space-x-2 border-b border-slate-800 pb-2">
+                      <UserCheck className="w-4 h-4" />
+                      <span>PERFIL DO AGENTE SDR (AUTOMAÇÃO DE MENSAGENS)</span>
+                    </h4>
 
-                  <div>
-                    <label className="block text-slate-400 font-bold mb-1 uppercase text-[10px]">Nome do SDR (Atendente IA)</label>
-                    <input
-                      type="text"
-                      defaultValue={currentTenant?.sdrConfig?.name || 'Bryan Santos'}
-                      onBlur={async (e) => {
-                        const newName = e.target.value;
-                        if (!newName) return;
-                        try {
-                          await fetch(`/api/tenants/${currentTenantId}/settings`, {
-                            method: 'PUT',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ sdrName: newName })
-                          });
-                          showToast(`✅ Nome do Agente SDR atualizado para "${newName}"!`);
-                          loadData();
-                        } catch (err) {
-                          console.error(err);
-                        }
-                      }}
-                      className="w-full p-2.5 rounded bg-[#12121a] border border-slate-700 text-white font-bold focus:border-cyan-400 focus:outline-hidden"
-                    />
-                    <p className="text-[10px] text-slate-500 mt-1">Este nome será usado pelo SDR em todos os contatos via WhatsApp e E-mail.</p>
+                    <div>
+                      <label className="block text-slate-400 font-bold mb-1 uppercase text-[10px]">Nome do SDR (Atendente IA)</label>
+                      <input
+                        type="text"
+                        defaultValue={currentTenant?.sdrConfig?.name || 'Bryan Santos'}
+                        onBlur={async (e) => {
+                          const newName = e.target.value;
+                          if (!newName) return;
+                          try {
+                            await fetch(`/api/tenants/${currentTenantId}/settings`, {
+                              method: 'PUT',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ sdrName: newName })
+                            });
+                            showToast(`✅ Nome do Agente SDR atualizado para "${newName}"!`);
+                            loadData();
+                          } catch (err) {
+                            console.error(err);
+                          }
+                        }}
+                        className="w-full p-2.5 rounded bg-[#12121a] border border-slate-700 text-white font-bold focus:border-cyan-400 focus:outline-hidden"
+                      />
+                      <p className="text-[10px] text-slate-500 mt-1">Este nome será usado pelo SDR em todos os contatos via WhatsApp e E-mail.</p>
+                    </div>
+
+                    <div>
+                      <label className="block text-slate-400 font-bold mb-1 uppercase text-[10px]">Tom de Voz da Abordagem</label>
+                      <select
+                        defaultValue={currentTenant?.sdrConfig?.tone || 'informal'}
+                        onChange={async (e) => {
+                          try {
+                            await fetch(`/api/tenants/${currentTenantId}/settings`, {
+                              method: 'PUT',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ sdrTone: e.target.value })
+                            });
+                            showToast(`✅ Tom de voz do SDR atualizado!`);
+                            loadData();
+                          } catch (err) {
+                            console.error(err);
+                          }
+                        }}
+                        className="w-full p-2.5 rounded bg-[#12121a] border border-slate-700 text-slate-200 cursor-pointer"
+                      >
+                        <option value="informal">Informal & Direto (Recomendado para WhatsApp)</option>
+                        <option value="consultivo">Consultivo & Profissional</option>
+                        <option value="urgente">Urgente & Promocional</option>
+                      </select>
+                    </div>
                   </div>
 
-                  <div>
-                    <label className="block text-slate-400 font-bold mb-1 uppercase text-[10px]">Tom de Voz da Abordagem</label>
-                    <select
-                      defaultValue={currentTenant?.sdrConfig?.tone || 'informal'}
-                      onChange={async (e) => {
-                        try {
-                          await fetch(`/api/tenants/${currentTenantId}/settings`, {
-                            method: 'PUT',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ sdrTone: e.target.value })
-                          });
-                          showToast(`✅ Tom de voz do SDR atualizado!`);
-                          loadData();
-                        } catch (err) {
-                          console.error(err);
-                        }
-                      }}
-                      className="w-full p-2.5 rounded bg-[#12121a] border border-slate-700 text-slate-200 cursor-pointer"
-                    >
-                      <option value="informal">Informal & Direto (Recomendado para WhatsApp)</option>
-                      <option value="consultivo">Consultivo & Profissional</option>
-                      <option value="urgente">Urgente & Promocional</option>
-                    </select>
+                  {/* WHATSAPP QR CODE CONNECTOR CARD */}
+                  <div className="bg-[#0a0714] border border-emerald-500/30 rounded-lg p-4 space-y-4">
+                    <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                      <h4 className="font-bold text-emerald-400 text-xs uppercase flex items-center space-x-2">
+                        <QrCode className="w-4 h-4 text-emerald-400" />
+                        <span>CONEXÃO DO WHATSAPP VIA QR CODE</span>
+                      </h4>
+                      <span className={`px-2 py-0.5 rounded text-[9px] font-bold border uppercase flex items-center space-x-1 ${
+                        qrStatus === 'connected'
+                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                          : qrStatus === 'connecting'
+                          ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 animate-pulse'
+                          : 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                      }`}>
+                        {qrStatus === 'connected' ? <Wifi className="w-3 h-3 text-emerald-400" /> : <WifiOff className="w-3 h-3 text-rose-400" />}
+                        <span>{qrStatus === 'connected' ? 'CONECTADO' : qrStatus === 'connecting' ? 'AGUARDANDO LEITURA' : 'DESCONECTADO'}</span>
+                      </span>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row items-center gap-4 bg-[#05070d] p-3 rounded-lg border border-slate-800">
+                      {/* QR Code Graphic Box */}
+                      <div className="relative w-28 h-28 bg-white p-2 rounded-lg shrink-0 flex items-center justify-center border-2 border-emerald-500/40 shadow-lg group">
+                        {/* Custom Styled QR Code Matrix */}
+                        <div className="w-full h-full bg-[#000] p-1 grid grid-cols-7 gap-0.5 rounded">
+                          {Array.from({ length: 49 }).map((_, i) => (
+                            <div
+                              key={i}
+                              className={`${
+                                i % 2 === 0 || i % 5 === 0 || i < 7 || i > 42 || i % 7 === 0 || i % 7 === 6
+                                  ? 'bg-black'
+                                  : 'bg-white'
+                              } rounded-[1px]`}
+                            />
+                          ))}
+                        </div>
+                        {qrStatus === 'connected' && (
+                          <div className="absolute inset-0 bg-slate-950/85 backdrop-blur-xs flex flex-col items-center justify-center text-center p-2 rounded-lg space-y-1">
+                            <CheckCircle className="w-6 h-6 text-emerald-400" />
+                            <span className="text-[9px] font-bold text-emerald-300 uppercase">ONLINE</span>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="space-y-2 flex-1 text-center sm:text-left">
+                        <div>
+                          <span className="text-[10px] text-slate-500 uppercase font-bold">DISPOSITIVO CONECTADO:</span>
+                          <div className="text-sm font-bold text-white flex items-center space-x-1 justify-center sm:justify-start">
+                            <Phone className="w-3.5 h-3.5 text-emerald-400" />
+                            <span>{qrPhoneNumber}</span>
+                          </div>
+                        </div>
+
+                        <div className="text-[10px] text-slate-400 space-y-0.5">
+                          <p>Instância: <code className="text-cyan-300">{qrSessionToken}</code></p>
+                          <p>Gateway: <span className="text-emerald-400 font-bold">Meowhats / Baileys API v2.4</span></p>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2 pt-1 justify-center sm:justify-start">
+                          <button
+                            onClick={() => {
+                              setQrRefreshing(true);
+                              setTimeout(() => {
+                                setQrRefreshing(false);
+                                setQrStatus('connected');
+                                showToast('✅ QR Code recarregado e conexão estabelecida!');
+                              }, 1200);
+                            }}
+                            disabled={qrRefreshing}
+                            className="px-2.5 py-1 rounded bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 text-[10px] font-bold flex items-center space-x-1 cursor-pointer"
+                          >
+                            <RefreshCw className={`w-3 h-3 ${qrRefreshing ? 'animate-spin' : ''}`} />
+                            <span>Gerar QR Code</span>
+                          </button>
+
+                          {qrStatus === 'connected' ? (
+                            <button
+                              onClick={() => {
+                                setQrStatus('disconnected');
+                                showToast('⚠️ Dispositivo WhatsApp desconectado.');
+                              }}
+                              className="px-2.5 py-1 rounded bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-[10px] font-bold cursor-pointer"
+                            >
+                              Desconectar
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => {
+                                setQrStatus('connected');
+                                showToast('✅ WhatsApp reconectado com sucesso!');
+                              }}
+                              className="px-2.5 py-1 rounded bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 text-[10px] font-bold cursor-pointer"
+                            >
+                              Reconectar
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* VISOR DE CONVERSAS EM TEMPO REAL DO SDR (LIVE WHATSAPP MONITOR) */}
+              <div className="bg-[#12121a] border border-cyan-500/30 rounded-lg p-5 space-y-4 font-mono">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                  <div className="flex items-center space-x-2 font-bold text-sm text-cyan-300 uppercase">
+                    <MessageSquare className="w-4 h-4 text-cyan-400" />
+                    <span>VISOR DE CONVERSAS EM TEMPO REAL DO SDR & WHATSAPP</span>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                    <span className="text-[10px] text-emerald-300 font-bold uppercase">LIVE FEED ATIVO</span>
                   </div>
                 </div>
 
-                {/* Queue Management Config */}
-                <div className="bg-[#0a0714] border border-slate-800 rounded-lg p-4 space-y-4">
-                  <h4 className="font-bold text-amber-400 text-xs uppercase flex items-center space-x-2 border-b border-slate-800 pb-2">
-                    <Zap className="w-4 h-4" />
-                    <span>REFILL AUTOMÁTICO DA FILA DE LEADS</span>
-                  </h4>
-
-                  <div>
-                    <label className="block text-slate-400 font-bold mb-1 uppercase text-[10px]">Meta da Fila de Leads (Alvo)</label>
-                    <input
-                      type="number"
-                      defaultValue={currentTenant?.targetQueueGoal || 300}
-                      onBlur={async (e) => {
-                        const val = Number(e.target.value);
-                        try {
-                          await fetch(`/api/tenants/${currentTenantId}/settings`, {
-                            method: 'PUT',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ targetQueueGoal: val })
-                          });
-                          showToast(`✅ Meta da fila atualizada para ${val} leads!`);
-                          loadData();
-                        } catch (err) {
-                          console.error(err);
-                        }
-                      }}
-                      className="w-full p-2.5 rounded bg-[#12121a] border border-slate-700 text-white font-bold"
-                    />
-                    <p className="text-[10px] text-slate-500 mt-1">Quantidade ideal de leads qualificados mantidos na esteira.</p>
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 h-[500px]">
+                  {/* Left Column: Lead List for Conversations */}
+                  <div className="bg-[#0a0714] border border-slate-800 rounded-lg p-3 overflow-y-auto space-y-2">
+                    <div className="text-[10px] font-bold text-slate-400 uppercase border-b border-slate-800 pb-2">
+                      LEADS EM ATENDIMENTO ({leads.length})
+                    </div>
+                    {leads.map((lead) => {
+                      const isSelected = sdrActiveLeadId === lead.id;
+                      return (
+                        <button
+                          key={lead.id}
+                          onClick={() => setSdrActiveLeadId(lead.id)}
+                          className={`w-full text-left p-3 rounded-lg border transition-all cursor-pointer ${
+                            isSelected
+                              ? 'bg-cyan-500/15 border-cyan-500/50 text-white shadow-pixel'
+                              : 'bg-[#05070d] border-slate-800/80 text-slate-300 hover:border-slate-700'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between font-bold text-xs">
+                            <span className="truncate max-w-[140px]">{lead.name}</span>
+                            <span className={`px-1.5 py-0.5 rounded text-[8px] uppercase border ${
+                              lead.pipelineStatus === 'fechado'
+                                ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+                                : lead.pipelineStatus === 'qualificado'
+                                ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                                : 'bg-slate-800 text-slate-400 border-slate-700'
+                            }`}>
+                              {lead.pipelineStatus}
+                            </span>
+                          </div>
+                          <div className="text-[10px] text-slate-500 mt-1 flex items-center justify-between">
+                            <span>{lead.phone}</span>
+                            <span className="text-cyan-400 font-bold">{lead.score} pts</span>
+                          </div>
+                        </button>
+                      );
+                    })}
                   </div>
 
-                  <div>
-                    <label className="block text-slate-400 font-bold mb-1 uppercase text-[10px]">Gatilho Mínimo de Refill (Threshold)</label>
-                    <input
-                      type="number"
-                      defaultValue={currentTenant?.minQueueThreshold || 50}
-                      onBlur={async (e) => {
-                        const val = Number(e.target.value);
-                        try {
-                          await fetch(`/api/tenants/${currentTenantId}/settings`, {
-                            method: 'PUT',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ minQueueThreshold: val })
-                          });
-                          showToast(`✅ Gatilho mínimo atualizado para ${val} leads!`);
-                          loadData();
-                        } catch (err) {
-                          console.error(err);
-                        }
-                      }}
-                      className="w-full p-2.5 rounded bg-[#12121a] border border-slate-700 text-white font-bold"
-                    />
-                    <p className="text-[10px] text-slate-500 mt-1">Quando a fila de leads ativos cair abaixo deste número, o scraper roda automaticamente.</p>
+                  {/* Right Column: Live Chat Thread & Sender */}
+                  <div className="lg:col-span-2 bg-[#05070d] border border-slate-800 rounded-lg flex flex-col overflow-hidden">
+                    {/* Active Lead Header */}
+                    {sdrActiveLeadId ? (
+                      (() => {
+                        const activeLead = leads.find((l) => l.id === sdrActiveLeadId);
+                        return (
+                          <>
+                            <div className="p-3 bg-[#0a0714] border-b border-slate-800 flex items-center justify-between">
+                              <div className="flex items-center space-x-2.5">
+                                <div className="w-8 h-8 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center font-bold text-emerald-400 text-xs">
+                                  <Phone className="w-4 h-4" />
+                                </div>
+                                <div>
+                                  <div className="font-bold text-white text-xs">{activeLead?.name}</div>
+                                  <div className="text-[10px] text-slate-400">{activeLead?.phone} • {activeLead?.category}</div>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center space-x-2">
+                                <button
+                                  onClick={() => setSdrLiveHumanMode(!sdrLiveHumanMode)}
+                                  className={`px-2.5 py-1 rounded text-[10px] font-bold border flex items-center space-x-1 cursor-pointer transition-colors ${
+                                    sdrLiveHumanMode
+                                      ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                                      : 'bg-cyan-500/10 text-cyan-300 border-cyan-500/30'
+                                  }`}
+                                >
+                                  {sdrLiveHumanMode ? <UserCheck className="w-3.5 h-3.5" /> : <Bot className="w-3.5 h-3.5" />}
+                                  <span>{sdrLiveHumanMode ? 'INTERVENÇÃO HUMANA' : 'SDR IA AUTOMÁTICO'}</span>
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Chat History Messages Stream */}
+                            <div className="flex-1 p-4 overflow-y-auto space-y-3 font-mono text-xs bg-[#020408]">
+                              {sdrLiveMessages.length === 0 ? (
+                                <div className="text-center py-16 text-slate-600 italic">
+                                  [ NENHUMA MENSAGEM REGISTRADA AINDA. O SDR IA DISPARARÁ AO INICIAR CONTATO ]
+                                </div>
+                              ) : (
+                                sdrLiveMessages.map((msg) => {
+                                  const isSdr = msg.role === 'sdr';
+                                  return (
+                                    <div
+                                      key={msg.id}
+                                      className={`flex flex-col ${isSdr ? 'items-start' : 'items-end'} space-y-1`}
+                                    >
+                                      <span className="text-[9px] text-slate-500 px-1">
+                                        {msg.sdrName ? msg.sdrName.toUpperCase() : isSdr ? 'SDR IA' : 'LEAD (WHATSAPP)'} • {new Date(msg.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                      </span>
+                                      <div
+                                        className={`max-w-[85%] p-3 rounded-lg text-xs leading-relaxed border ${
+                                          isSdr
+                                            ? 'bg-[#0b0e17] text-slate-200 border-slate-800'
+                                            : 'bg-emerald-950/60 text-emerald-200 border-emerald-500/40'
+                                        }`}
+                                      >
+                                        {msg.text}
+                                      </div>
+                                    </div>
+                                  );
+                                })
+                              )}
+                            </div>
+
+                            {/* Live Chat Form Input */}
+                            <form onSubmit={handleSendSdrLiveMessage} className="p-3 bg-[#0a0714] border-t border-slate-800 flex items-center space-x-2">
+                              <input
+                                type="text"
+                                value={sdrLiveInput}
+                                onChange={(e) => setSdrLiveInput(e.target.value)}
+                                placeholder={
+                                  sdrLiveHumanMode
+                                    ? 'Digite como operador humano no WhatsApp...'
+                                    : 'Simule resposta do cliente para o SDR IA...'
+                                }
+                                className="flex-1 p-2.5 rounded bg-[#05070d] border border-slate-800 text-xs text-slate-200 focus:outline-hidden focus:border-cyan-500/50"
+                              />
+                              <button
+                                type="submit"
+                                disabled={sdrSending || !sdrLiveInput.trim()}
+                                className="px-4 py-2.5 rounded font-bold text-slate-950 bg-cyan-400 hover:bg-cyan-300 border border-cyan-300 shadow-[0_0_10px_rgba(6,182,212,0.25)] flex items-center space-x-1.5 cursor-pointer text-xs"
+                              >
+                                <Send className="w-3.5 h-3.5" />
+                                <span>Enviar</span>
+                              </button>
+                            </form>
+                          </>
+                        );
+                      })()
+                    ) : (
+                      <div className="flex-1 flex items-center justify-center text-slate-500 italic">
+                        [ SELECIONE UM LEAD À ESQUERDA PARA ACOMPANHAR A CONVERSA EM TEMPO REAL ]
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>

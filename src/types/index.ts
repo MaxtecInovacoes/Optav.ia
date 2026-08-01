@@ -9,7 +9,7 @@ export interface Tenant {
   name: string;
   segment: SegmentType;
   region: string;
-  plan: 'pro' | 'enterprise' | 'growth';
+  plan: 'free' | 'pro' | 'enterprise' | 'growth';
   targetQueueGoal?: number; // e.g. 300
   minQueueThreshold?: number; // e.g. 50
   autoRefillEnabled?: boolean;

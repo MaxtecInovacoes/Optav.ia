@@ -92,7 +92,7 @@ export const PipelinePlaybookModal: React.FC<PipelinePlaybookModalProps> = ({
           </div>
           <div>
             <h2 className="text-lg font-bold text-white flex items-center space-x-2">
-              <span>Auditoria de Conformidade Playbook FRALIB (8-Stage Pipeline)</span>
+              <span>Auditoria de Conformidade Playbook OPTAV.IA (8-Stage Pipeline)</span>
               <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[10px] rounded uppercase">
                 100% OK
               </span>

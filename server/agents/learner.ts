@@ -1,6 +1,7 @@
 import { Agent } from './base.js';
 import { db } from '../db.js';
 import { LearningPattern } from '../../src/types/index.js';
+import { logger } from '../logger.js';
 
 export class LearnerAgent extends Agent {
   constructor() {
@@ -14,31 +15,41 @@ export class LearnerAgent extends Agent {
     const startTime = Date.now();
     const decisions = tenantId ? db.decisions.filter((d) => d.tenantId === tenantId) : db.decisions;
 
-    // Analyze outcomes
+    const total = decisions.length;
+    if (total < 10) {
+      logger.info({ total }, '[LearnerAgent] Amostras insuficientes para extração de padrões reais (< 10 decisões).');
+      db.auditLogs.unshift({
+        id: `al-${Date.now()}`,
+        actor: 'LearnerAgent',
+        action: 'Ciclo de Aprendizado',
+        details: `Amostra de dados insuficiente (${total}/10 decisões). Nenhum padrão fictício gerado.`,
+        timestamp: new Date().toISOString()
+      });
+      return db.learnings;
+    }
+
     const successful = decisions.filter((d) => d.outcome === 'success').length;
-    const total = decisions.length || 1;
     const successRate = (successful / total) * 100;
 
     const newLearning: LearningPattern = {
       id: `lr-${Date.now()}`,
-      pattern: `Contatos com personalização de restaurante apresentam ${successRate.toFixed(0)}% de taxa de conversão positiva quando o site exibe destaques do cardápio.`,
+      pattern: `Análise real de ${total} interações: Taxa de conversão atual em ${successRate.toFixed(1)}%.`,
       agent: 'OutreachAgent',
       scope: 'global',
-      confidence: Number((0.85 + Math.random() * 0.1).toFixed(2)),
-      nExamples: total + 12,
-      promptDelta: 'Mencione a facilidade de ver o cardápio e agendar mesa diretamente no WhatsApp.',
+      confidence: Number((successful / total).toFixed(2)),
+      nExamples: total,
+      promptDelta: 'Foque nos pontos de conversão direta destacados pelo cliente nas interações bem-sucedidas.',
       active: true,
       createdAt: new Date().toISOString()
     };
 
     db.learnings.unshift(newLearning);
 
-    // Audit log entry
     db.auditLogs.unshift({
       id: `al-${Date.now()}`,
       actor: 'LearnerAgent',
       action: 'Ciclo de Aprendizado Concluído',
-      details: `Analisou ${total} decisões e gerou o padrão "${newLearning.pattern}"`,
+      details: `Analisou ${total} decisões reais com ${successRate.toFixed(1)}% de sucesso.`,
       timestamp: new Date().toISOString()
     });
 
@@ -49,3 +60,5 @@ export class LearnerAgent extends Agent {
     return db.learnings;
   }
 }
+
+export const learnerAgent = new LearnerAgent();

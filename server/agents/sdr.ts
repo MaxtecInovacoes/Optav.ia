@@ -2,6 +2,7 @@ import { Agent } from './base.js';
 import { db } from '../db.js';
 import { generateSdrReply } from '../gemini.js';
 import { ConversationMessage } from '../../src/types/index.js';
+import { sendWhatsAppMessage } from '../whatsapp_listener.js';
 
 export class SDRAgent extends Agent {
   constructor() {
@@ -11,36 +12,34 @@ export class SDRAgent extends Agent {
     );
   }
 
-  async handleLeadMessage(leadId: string, leadText: string): Promise<ConversationMessage> {
+  async handleLeadMessage(leadId: string, leadText: string, senderRole: 'lead' | 'human' = 'lead'): Promise<ConversationMessage> {
     const startTime = Date.now();
-    const lead = db.leads.get(leadId);
-    if (!lead) throw new Error(`Lead ${leadId} not found`);
+    const lead = await db.getLeadById(leadId);
+    if (!lead) throw new Error(`Lead ${leadId} não encontrado`);
 
-    const tenant = db.tenants.get(lead.tenantId);
+    const tenant = await db.getTenantById(lead.tenantId);
     const sdrName = tenant?.sdrConfig.name || 'Camila Santos';
     const sdrTone = tenant?.sdrConfig.tone || 'informal';
     const sdrRules = tenant?.sdrConfig.rules || ['Mencione o nome da empresa'];
 
-    // Append lead message to db
     const leadMsg: ConversationMessage = {
       id: `msg-${Date.now()}-lead`,
       leadId,
       tenantId: lead.tenantId,
-      role: 'lead',
+      role: senderRole,
       text: leadText,
       sentAt: new Date().toISOString(),
       sdrName: lead.name
     };
 
-    const history = db.messages.get(leadId) || [];
-    history.push(leadMsg);
+    await db.addMessage(leadMsg);
 
-    // Update lead status
     lead.lastReplyAt = leadMsg.sentAt;
     lead.pipelineStatus = 'followup_1';
-    db.leads.set(leadId, lead);
+    await db.saveLead(lead);
 
-    // Generate SDR reply
+    const history = await db.getMessagesByLeadId(leadId);
+
     const replyText = await generateSdrReply(
       lead.name,
       sdrName,
@@ -59,11 +58,15 @@ export class SDRAgent extends Agent {
       sdrName
     };
 
-    history.push(sdrMsg);
-    db.messages.set(leadId, history);
+    await db.addMessage(sdrMsg);
 
     lead.lastMessageAt = sdrMsg.sentAt;
-    db.leads.set(leadId, lead);
+    await db.saveLead(lead);
+
+    // Send WhatsApp dispatch
+    if (lead.phone) {
+      await sendWhatsAppMessage(lead.tenantId, lead.phone, replyText);
+    }
 
     const duration = Date.now() - startTime;
     this.recordDecision(lead.tenantId, leadId, { leadText }, { replyText }, 'success', { durationMs: duration });
@@ -72,3 +75,5 @@ export class SDRAgent extends Agent {
     return sdrMsg;
   }
 }
+
+export const sdrAgent = new SDRAgent();
