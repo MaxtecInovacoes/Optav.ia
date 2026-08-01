@@ -1,0 +1,6 @@
+{
+  "name": "Optav.ia — Sistema Multi-Tenant com Agentes Inteligentes",
+  "description": "Plataforma multi-tenant de prospecção no Google Maps, geração automática de sites cinematográficos com Astro/GSAP, deploy Cloudflare, outreach via WhatsApp e aprendizado contínuo com agentes AI.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
